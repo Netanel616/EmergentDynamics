@@ -40,3 +40,17 @@ class EmergentEngine:
         """
         self.velocities[:, 0] = self.v0 * np.cos(self.headings)
         self.velocities[:, 1] = self.v0 * np.sin(self.headings)
+
+    def step(self, dt: float):
+        """
+        Advances the simulation by a single time step dt using Euler Integration.
+        Enforces periodic (toroidal) boundary conditions across the domain.
+
+        :param dt: Time step delta (discrete time increment)
+        """
+        # matrix operation: (N,2) = (N,2) + (N,2) * dt
+        self.positions += self.velocities * dt
+
+        # Periodic boundary conditions
+        self.positions = self.positions % self.L
+

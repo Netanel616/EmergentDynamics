@@ -55,3 +55,46 @@ def test_vector_magnitude_matches_speed() -> None:
 
     # Verify magnitudes equal speed (allowing for minor floating-point tolerances via np.allclose)
     assert np.allclose(magnitudes, speed)
+
+
+def test_toroidal_boundary_wrapping() -> None:
+    """
+    Verify that agents wrapping past the domain boundaries correctly
+    teleport to the opposite side of the toroidal space.
+    """
+    num_agents = 2
+    domain_size = 10.0
+    speed = 1.0
+
+    engine = EmergentEngine(num_agents=num_agents, domain_size=domain_size, speed=speed)
+
+    # Force specific initial positions near the boundaries
+    # Agent 0: Near the right boundary (x = 9.5, y = 5.0)
+    # Agent 1: Near the left boundary (x = 0.5, y = 5.0)
+    engine.positions = np.array([
+        [9.5, 5.0],
+        [0.5, 5.0]
+    ], dtype=np.float64)
+
+    # Force explicit velocities
+    # Agent 0: Moving right (+x) -> will cross the right boundary
+    # Agent 1: Moving left (-x) -> will cross the left boundary
+    engine.velocities = np.array([
+        [1.0, 0.0],
+        [-1.0, 0.0]
+    ], dtype=np.float64)
+
+    # Advance the simulation by dt = 1.0 time units
+    # Expected positions before wrapping:
+    # Agent 0: 9.5 + 1.0 = 10.5  --> Should wrap to 10.5 % 10.0 = 0.5
+    # Agent 1: 0.5 - 1.0 = -0.5  --> Should wrap to -0.5 % 10.0 = 9.5
+    dt = 1.0
+    engine.step(dt)
+
+    expected_positions = np.array([
+        [0.5, 5.0],
+        [9.5, 5.0]
+    ], dtype=np.float64)
+
+    # Assert that actual wrapped positions match expected positions within tolerance
+    assert np.allclose(engine.positions, expected_positions)
