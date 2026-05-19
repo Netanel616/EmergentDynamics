@@ -1,3 +1,4 @@
+from typing import cast
 import numpy as np
 
 
@@ -11,12 +12,18 @@ class EmergentEngine:
                  domain_size: float,
                  speed: float,
                  alignment_radius: float = 5.0,
-                 noise_amplitude: float = 0.0):
+                 noise_amplitude: float = 0.0,
+                 max_turn_rate: float = 4.0,
+                 update_stride: int = 1):
         self.N: int = num_agents
         self.L: float = domain_size
         self.v0: float = speed
-        self.R = alignment_radius
-        self.eta = noise_amplitude # (eta) maximum angular noise perturbation
+        self.R: float = alignment_radius
+        self.eta: float = noise_amplitude # (eta) maximum angular noise perturbation
+        self.max_turn_rate:float = max_turn_rate
+        self.update_stride: int = update_stride
+        self.step_count: int = 0
+        self.target_headings: np.ndarray = np.zeros(self.N, dtype=np.float64)
 
         #Initialize the system state
         self.positions: np.ndarray = np.zeros((self.N, 2), dtype= np.float64)
@@ -30,12 +37,9 @@ class EmergentEngine:
         Distributes agents uniformly across the continuous 2D domain
         and assigns random initial heading directions.
         """
-        # Uniform spatial distribution: position between 0 and L
-        self.positions = np.random.uniform(0, self.L, size=(self.N, 2))
-
-        # Uniform direction distribution: angels between -pi and pi
-        self.headings = np.random.uniform(-np.pi, np.pi, size=self.N)
-
+        self.positions = cast(np.ndarray, np.random.uniform(0, self.L, size=(self.N, 2)))
+        self.headings = cast(np.ndarray, np.random.uniform(-np.pi, np.pi, size=self.N))
+        self.target_headings = self.headings.copy()
         # Compute velocity vectir based on headings: V = [v0*cos(theta), v0*sin(theta)]
         self.update_velocities_from_headings()
 
@@ -54,7 +58,6 @@ class EmergentEngine:
 
         :param dt: Time step delta (discrete time increment)
         """
-        # matrix operation: (N,2) = (N,2) + (N,2) * dt
         self.positions += self.velocities * dt
 
         # Periodic boundary conditions
@@ -66,30 +69,23 @@ class EmergentEngine:
         Uses broadcasting and the Minimum Image Convention to calculate
         toroidal distances.
         """
-        # 1. Compute pairwise difference vectors using broadcasting: shape (N, N, 2)
+
         diff = self.positions[:, np.newaxis, :] - self.positions[np.newaxis, :, :]
 
-        # 2. Apply Minimum Image Convention to account for toroidal wrapping
         diff = diff - self.L * np.round(diff / self.L)
 
-        # 3. Calculate squared Euclidean distances: shape (N, N)
         dist_sq = np.sum(diff ** 2, axis=-1)
 
-        # 4. Create boolean neighborhood adjacency matrix: shape (N, N)
         neighbors_mask = dist_sq < (self.R ** 2)
 
-        # 5. Extract heading vector components for all agents
         sin_headings = np.sin(self.headings)
         cos_headings = np.cos(self.headings)
 
-        # 6. Sum neighbor heading vectors using mask multiplication: shape (N,)
-        # Multiplying 1D sin_headings[np.newaxis, :] (1, N) with mask (N, N)
-        # averages components across neighbors (axis=1)
         sin_sum = np.sum(sin_headings[np.newaxis, :] * neighbors_mask, axis=1)
         cos_sum = np.sum(cos_headings[np.newaxis, :] * neighbors_mask, axis=1)
 
-        # 7. Update headings using trigonometric arc tangent
-        self.headings = np.arctan2(sin_sum, cos_sum)
+        self.target_headings = np.arctan2(sin_sum, cos_sum)
+
 
     def step_with_alignment(self, dt: float) -> None:
         """
@@ -98,24 +94,19 @@ class EmergentEngine:
 
         :param dt: Time step delta (discrete time increment)
         """
-        # noise
-        self.apply_noise()
-
         # Align headings of neighboring agents
         self.align_headings()
-
-
-
+        self.headings = self.target_headings.copy()
+        # noise
+        self.apply_absolute_noise()
         # Keep velocities in sync with newly aligned headings
         self.update_velocities_from_headings()
-
         # Update positions using Euler Integration
         self.positions += self.velocities * dt
-
         # Enforce periodic boundary wrapping
         self.positions = self.positions % self.L
 
-    def apply_noise(self) -> None:
+    def apply_absolute_noise(self) -> None:
         """
         Adds a random, uniform angular noise perturbation within the range
         [-eta/2, eta/2] to all heading angles. Wraps angles back to [-pi, pi].
@@ -137,4 +128,45 @@ class EmergentEngine:
         clamping the value to a minimum of 0.0 (no noise).
         """
         self.eta = max(0.0, new_eta)
+
+    def step_with_smooth_alignment(self, dt: float) -> None:
+        """
+        The continuous smooth physics loop: Interpolates headings towards targets
+        clamped by self.max_turn_rate, decouples neighborhood planning via update strides,
+        and applies continuous stochastic diffusion noise.
+        """
+        # Decouple spatial neighborhood planning
+        if self.step_count % self.update_stride == 0:
+            self.align_headings()
+        self.step_count += 1
+
+        # Turning attack rate/rotational inertia
+        # Calculate the shortest angular difference to target headings
+        angular_diff = (self.target_headings - self.headings + np.pi) % (2.0 * np.pi) - np.pi
+
+        # Clamp turning step to maximum rotational speed (radians/second)
+        max_step = self.max_turn_rate * dt
+        turn_step = np.clip(angular_diff, -max_step, max_step)
+        self.headings += turn_step
+
+        # Apply stochastic continuous angular diffusion
+        self.apply_smooth_noise(dt)
+
+        # Synchronize velocity coordinates and integrate position state
+        self.update_velocities_from_headings()
+        self.positions += self.velocities * dt
+        self.positions = self.positions % self.L
+
+    def apply_smooth_noise(self, dt: float) -> None:
+        """
+        Stochastic physics noise: Scales random noise by sqrt(dt) to guarantee
+        that the perturbation models a mathematically consistent continuous
+        diffusion process (Wiener process) independent of frame-rate.
+        """
+        if self.eta == 0.0:
+            return
+        # Scaling by sqrt(dt) keeps angular diffusion rates stable at variable FPS
+        noise = np.random.uniform(-self.eta / 2.0, self.eta / 2.0, size=self.N) * np.sqrt(dt)
+        self.headings += noise
+        self.headings = (self.headings + np.pi) % (2.0 * np.pi) - np.pi
 
