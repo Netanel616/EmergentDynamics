@@ -99,7 +99,8 @@ class EmergentVisualizer:
                 break
 
             # Physics step: advance the simulation matrices
-            self.engine.step(dt)
+            # self.engine.step(dt)
+            self.engine.step_with_alignment(dt)
 
             # Graphics step: draw the updated state
             self.render()
