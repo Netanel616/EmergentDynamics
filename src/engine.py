@@ -7,11 +7,16 @@ class EmergentEngine:
     Manages the vectorized state matrices of a multi-agent crowd system.
     """
 
-    def __init__(self, num_agents: int, domain_size: float, speed: float, alignment_radius: float = 5.0):
+    def __init__(self, num_agents: int,
+                 domain_size: float,
+                 speed: float,
+                 alignment_radius: float = 5.0,
+                 noise_amplitude: float = 0.0):
         self.N: int = num_agents
         self.L: float = domain_size
         self.v0: float = speed
         self.R = alignment_radius
+        self.eta = noise_amplitude # (eta) maximum angular noise perturbation
 
         #Initialize the system state
         self.positions: np.ndarray = np.zeros((self.N, 2), dtype= np.float64)
@@ -93,8 +98,13 @@ class EmergentEngine:
 
         :param dt: Time step delta (discrete time increment)
         """
+        # noise
+        self.apply_noise()
+
         # Align headings of neighboring agents
         self.align_headings()
+
+
 
         # Keep velocities in sync with newly aligned headings
         self.update_velocities_from_headings()
@@ -104,4 +114,27 @@ class EmergentEngine:
 
         # Enforce periodic boundary wrapping
         self.positions = self.positions % self.L
+
+    def apply_noise(self) -> None:
+        """
+        Adds a random, uniform angular noise perturbation within the range
+        [-eta/2, eta/2] to all heading angles. Wraps angles back to [-pi, pi].
+        """
+        if self.eta == 0.0:
+            return
+
+        # Generate uniform random noise for all N agents simultaneously
+        noise = np.random.uniform(-self.eta / 2.0, self.eta / 2.0, size=self.N)
+        self.headings += noise
+
+        # Keep angles normalized within the physical range [-pi, pi]
+        # Using a continuous symmetric wrapping formula: (theta + pi) % (2*pi) - pi
+        self.headings = (self.headings + np.pi) % (2.0 * np.pi) - np.pi
+
+    def set_noise_amplitude(self, new_eta: float) -> None:
+        """
+        Dynamically adjusts the noise amplitude (eta) during runtime,
+        clamping the value to a minimum of 0.0 (no noise).
+        """
+        self.eta = max(0.0, new_eta)
 

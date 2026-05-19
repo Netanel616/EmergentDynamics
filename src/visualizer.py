@@ -46,6 +46,17 @@ class EmergentVisualizer:
                 if event.key == pygame.K_ESCAPE:
                     pygame.quit()
                     return False
+
+                # Control Noise Amplitude dynamically!
+                elif event.key == pygame.K_UP or event.key == pygame.K_EQUALS:  # UP or PLUS key
+                    new_noise = self.engine.eta + 0.05
+                    self.engine.set_noise_amplitude(new_noise)
+                    print(f"[Simulation] Increased Noise Amplitude to: {self.engine.eta:.2f}")
+
+                elif event.key == pygame.K_DOWN or event.key == pygame.K_MINUS:  # DOWN or MINUS key
+                    new_noise = self.engine.eta - 0.05
+                    self.engine.set_noise_amplitude(new_noise)
+                    print(f"[Simulation] Decreased Noise Amplitude to: {self.engine.eta:.2f}")
         return True
 
     def render(self) -> None:
