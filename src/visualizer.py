@@ -32,8 +32,8 @@ class EmergentVisualizer:
         self.title_font = pygame.font.Font(None, 24)
 
         # Interactive UI/UX States
-        self.use_smooth_mode: bool = True  # Starts in the realistic continuous smooth mode
-        self.align_on: bool = True
+        self.use_smooth_mode: bool = False  # Starts in the realistic continuous smooth mode
+        self.align_on: bool = False
         self.show_hud: bool = True  # Press 'H' to hide/show on-screen documentation
 
         # Visual color palette (Dark Slate, Vibrant Emerald, Amber vector headings)
@@ -93,10 +93,9 @@ class EmergentVisualizer:
             return
 
         # 1. Allocate a semi-transparent panel surface (Slate 900 with alpha)
-        hud_width, hud_height = 360, 190
+        hud_width, hud_height = 360, 240
         hud_surface = pygame.Surface((hud_width, hud_height), pygame.SRCALPHA)
         hud_surface.fill((15, 23, 42, 220))  # RGBA
-
         # 2. Add an elegant accent border
         pygame.draw.rect(hud_surface, self.COLOR_HEADING, (0, 0, hud_width, hud_height), width=1)
 
@@ -104,6 +103,7 @@ class EmergentVisualizer:
         fps_text = f"FPS: {int(self.clock.get_fps())}"
         align_text = "Align On" if self.align_on else "Align Off"
         mode_text = "SMOOTH (Rotational Inertia)" if self.use_smooth_mode else "CLASSIC (Instant Snapping)"
+        order_text = f"Global Order (phi): {self.engine.phi:.3f}"
         noise_text = f"Noise (eta): {self.engine.eta:.2f} rad"
         turn_text = f"Turn Rate (omega): {self.engine.max_turn_rate:.1f} rad/s"
         stride_text = f"Neighbor Stride: {self.engine.update_stride} frame(s)"
@@ -121,7 +121,8 @@ class EmergentVisualizer:
             (align_text, self.COLOR_TEXT_TEAL),
             (noise_text, self.COLOR_TEXT_WHITE),
             (turn_text, self.COLOR_TEXT_WHITE),
-            (fps_text, self.COLOR_TEXT_WHITE)
+            (fps_text, self.COLOR_TEXT_WHITE),
+            (order_text, self.COLOR_TEXT_WHITE)
         ]
 
         for idx, (text_line, color) in enumerate(rows):
@@ -131,7 +132,7 @@ class EmergentVisualizer:
         # Guide controls along the footer
         guide_surface = self.font.render("SPACE: Toggle Mode | UP/DN: Noise | W/S: Turn Rate | H: HUD", True,
                                          (148, 163, 184))
-        hud_surface.blit(guide_surface, (15, 162))
+        hud_surface.blit(guide_surface, (15, 200))
 
         # 5. Composite HUD onto the main display window
         self.screen.blit(hud_surface, (15, 15))

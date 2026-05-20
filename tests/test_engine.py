@@ -208,3 +208,39 @@ def test_step_with_alignment_toroidal() -> None:
     ], dtype=np.float64)
 
     assert np.allclose(engine.positions, expected_positions)
+
+
+def test_short_range_collision_avoidance() -> None:
+    """
+    Verify that if two agents are critical close (inside repulsion zone),
+    they steer away from each other to avoid a collision.
+    """
+    num_agents = 2
+    domain_size = 50.0
+    speed = 1.0
+    alignment_radius = 0
+
+    engine = EmergentEngine(
+        num_agents=num_agents,
+        domain_size=domain_size,
+        speed=speed,
+        alignment_radius=alignment_radius,
+        noise_amplitude=0.0
+    )
+
+    # Distance is 1.0, which is well within the 1.8 repulsion radius.
+    engine.positions = np.array([
+        [25.0, 25.0],
+        [26.0, 25.0]
+    ], dtype=np.float64)
+
+    # Make them face each other initially (agent 0 faces East, agent 1 faces West)
+    engine.headings = np.array([0.0, np.pi], dtype=np.float64)
+    engine.update_velocities_from_headings()
+
+    # Compute interactions
+    engine.align_headings()
+
+    # Repulsion should override alignment and push them apart
+    assert np.allclose(engine.target_headings[0], np.pi, atol=1e-1)
+    assert np.allclose(engine.target_headings[1], 0.0, atol=1e-1)

@@ -5,7 +5,7 @@ from src.visualizer import EmergentVisualizer
 
 def main() -> None:
     # 1. Configuration parameters
-    num_agents = 1000  # Start with a clean population size
+    num_agents = 100  # Start with a clean population size
     domain_size = 100.0  # Physical size of space
     agent_speed = 1.5  # Constant travel speed
     target_fps = 60  # Smooth graphics rate

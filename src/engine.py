@@ -7,14 +7,13 @@ class EmergentEngine:
     Core simulation engine for EmergentDynamics.
     Manages the vectorized state matrices of a multi-agent crowd system.
     """
-
     def __init__(self, num_agents: int,
                  domain_size: float,
                  speed: float,
                  alignment_radius: float = 5.0,
-                 noise_amplitude: float = 0.0,
+                 noise_amplitude: float = 1.5,
                  max_turn_rate: float = 4.0,
-                 update_stride: int = 1):
+                 update_stride: int = 3):
         self.N: int = num_agents
         self.L: float = domain_size
         self.v0: float = speed
@@ -31,6 +30,15 @@ class EmergentEngine:
         self.headings: np.ndarray = np.zeros(self.N, dtype= np.float64)
 
         self.initialize_random_state()
+
+        # Global Order Parameter
+        self.phi: float = 1.0
+        self.phi_history: list = []
+
+        # Interaction Radii and Weights
+        self.r_repulsion: float = 1.8
+        self.w_repulsion: float = 0.85
+
 
     def initialize_random_state(self):
         """
@@ -62,6 +70,7 @@ class EmergentEngine:
 
         # Periodic boundary conditions
         self.positions = self.positions % self.L
+        self.calculate_global_order()
 
     def align_headings(self) -> None:
         """
@@ -78,13 +87,50 @@ class EmergentEngine:
 
         neighbors_mask = dist_sq < (self.R ** 2)
 
+        repulsion_mask = (dist_sq < (self.r_repulsion ** 2)) & (dist_sq > 0.0)
+
         sin_headings = np.sin(self.headings)
         cos_headings = np.cos(self.headings)
 
         sin_sum = np.sum(sin_headings[np.newaxis, :] * neighbors_mask, axis=1)
         cos_sum = np.sum(cos_headings[np.newaxis, :] * neighbors_mask, axis=1)
+        # Normalize the accumulated alignment vectors
+        align_magnitude = np.sqrt(sin_sum ** 2 + cos_sum ** 2)
+        align_vectors = np.zeros((self.N, 2))
+        valid_align = align_magnitude > 0
+        align_vectors[valid_align, 0] = cos_sum[valid_align] / align_magnitude[valid_align]
+        align_vectors[valid_align, 1] = sin_sum[valid_align] / align_magnitude[valid_align]
 
-        self.target_headings = np.arctan2(sin_sum, cos_sum)
+        # --- PART B: Short-range collision avoidance ---
+        dist = np.sqrt(dist_sq)
+
+        # diff is (pos_j - pos_i). To steer away from j, we must move along -diff
+        direction_vectors = diff / (dist[:, :, np.newaxis] + 1e-9)
+
+        # Accumulate and normalize repulsion forces
+        total_repulsion = np.sum(direction_vectors * repulsion_mask[:, :, np.newaxis], axis=1)
+        repulsion_magnitude = np.linalg.norm(total_repulsion, axis=1)
+
+        repulse_vectors = np.zeros((self.N, 2))
+        valid_repulse = repulsion_magnitude > 0
+        repulse_vectors[valid_repulse] = total_repulsion[valid_repulse] / repulsion_magnitude[valid_repulse][
+            :, np.newaxis]
+
+        # --- PART C: Vector blending and target assignment ---
+        has_repulsion = repulsion_magnitude > 0
+        combined_vectors = np.where(
+            has_repulsion[:, np.newaxis],
+            (1.0 - self.w_repulsion) * align_vectors + self.w_repulsion * repulse_vectors,
+            align_vectors
+        )
+
+        # Update target headings if any neighbors are detected in either zone
+        has_any_neighbors = (np.sum(neighbors_mask, axis=1) > 0) | has_repulsion
+        self.target_headings = np.where(
+            has_any_neighbors,
+            np.arctan2(combined_vectors[:, 1], combined_vectors[:, 0]),
+            self.target_headings
+        )
 
 
     def step_with_alignment(self, dt: float) -> None:
@@ -105,6 +151,7 @@ class EmergentEngine:
         self.positions += self.velocities * dt
         # Enforce periodic boundary wrapping
         self.positions = self.positions % self.L
+        self.calculate_global_order()
 
     def apply_absolute_noise(self) -> None:
         """
@@ -156,6 +203,8 @@ class EmergentEngine:
         self.update_velocities_from_headings()
         self.positions += self.velocities * dt
         self.positions = self.positions % self.L
+        self.calculate_global_order()
+
 
     def apply_smooth_noise(self, dt: float) -> None:
         """
@@ -170,3 +219,18 @@ class EmergentEngine:
         self.headings += noise
         self.headings = (self.headings + np.pi) % (2.0 * np.pi) - np.pi
 
+    def calculate_global_order(self) -> None:
+        """
+        Calculates the global order parameter (phi), which measures the system's
+        total polarization. Returns a value between 0.0 (complete chaos/isotropic)
+        and 1.0 (perfect global alignment).
+        """
+        total_velocity_vector = np.sum(self.velocities, axis=0)
+
+        # Calculate the Euclidean magnitude (norm) of the accumulated vector
+        net_magnitude = np.linalg.norm(total_velocity_vector)
+
+        # Normalize by the theoretical maximum possible magnitude (N * v0)
+        phi = net_magnitude / (self.N * self.v0)
+
+        self.phi = float(phi)
