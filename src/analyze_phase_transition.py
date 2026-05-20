@@ -177,5 +177,5 @@ def run_hysteresis_analysis():
 
 
 if __name__ == "__main__":
-    #run_phase_transition_analysis()
+    run_phase_transition_analysis()
     run_hysteresis_analysis()
