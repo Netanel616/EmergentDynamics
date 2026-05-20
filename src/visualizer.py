@@ -81,6 +81,11 @@ class EmergentVisualizer:
                     self.engine.max_turn_rate = min(15.0, self.engine.max_turn_rate + 0.5)
                 elif event.key == pygame.K_s:
                     self.engine.max_turn_rate = max(0.5, self.engine.max_turn_rate - 0.5)
+                elif event.key == pygame.K_SPACE:
+                    self.use_smooth_mode = not self.use_smooth_mode
+                elif event.key == pygame.K_k:
+                    # Toggle between Spatial Hashing O(N) and Bruteforce O(N^2)
+                    self.engine.use_fast_compute = not self.engine.use_fast_compute
 
         return True
 
@@ -108,6 +113,7 @@ class EmergentVisualizer:
         turn_text = f"Turn Rate (omega): {self.engine.max_turn_rate:.1f} rad/s"
         stride_text = f"Neighbor Stride: {self.engine.update_stride} frame(s)"
         pop_text = f"Population (N): {self.engine.N} agents"
+        algo_text = "ALGO: Spatial Hash O(N)" if self.engine.use_fast_compute else "ALGO: Bruteforce O(N^2)"
 
         # 4. Draw texts on the transparent HUD surface
         # Header Title
@@ -122,7 +128,8 @@ class EmergentVisualizer:
             (noise_text, self.COLOR_TEXT_WHITE),
             (turn_text, self.COLOR_TEXT_WHITE),
             (fps_text, self.COLOR_TEXT_WHITE),
-            (order_text, self.COLOR_TEXT_WHITE)
+            (order_text, self.COLOR_TEXT_WHITE),
+            (algo_text, self.COLOR_TEXT_TEAL if self.engine.use_fast_compute else (239, 68, 68)),
         ]
 
         for idx, (text_line, color) in enumerate(rows):
@@ -132,7 +139,7 @@ class EmergentVisualizer:
         # Guide controls along the footer
         guide_surface = self.font.render("SPACE: Toggle Mode | UP/DN: Noise | W/S: Turn Rate | H: HUD", True,
                                          (148, 163, 184))
-        hud_surface.blit(guide_surface, (15, 200))
+        hud_surface.blit(guide_surface, (15, 220))
 
         # 5. Composite HUD onto the main display window
         self.screen.blit(hud_surface, (15, 15))

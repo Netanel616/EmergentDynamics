@@ -39,6 +39,13 @@ class EmergentEngine:
         self.r_repulsion: float = 1.8
         self.w_repulsion: float = 0.85
 
+        # Spatial Hashing Grid Settings
+        self.grid_cell_size: float = self.R
+        self.grid_num_cells_per_axis: int = int(np.floor(self.L / self.grid_cell_size))
+
+        # Algorithmic Mode Flag (True = O(N) Spatial Hashing, False = O(N^2) Bruteforce)
+        self.use_fast_compute: bool = False
+
 
     def initialize_random_state(self):
         """
@@ -141,7 +148,10 @@ class EmergentEngine:
         :param dt: Time step delta (discrete time increment)
         """
         # Align headings of neighboring agents
-        self.align_headings()
+        if self.use_fast_compute:
+            self.fast_align_headings()
+        else:
+            self.align_headings()
         self.headings = self.target_headings.copy()
         # noise
         self.apply_absolute_noise()
@@ -184,8 +194,11 @@ class EmergentEngine:
         """
         # Decouple spatial neighborhood planning
         if self.step_count % self.update_stride == 0:
-            self.align_headings()
-        self.step_count += 1
+            if self.use_fast_compute:
+                self.fast_align_headings()
+            else:
+                self.align_headings()
+        self.step_count+=1
 
         # Turning attack rate/rotational inertia
         # Calculate the shortest angular difference to target headings
@@ -234,3 +247,153 @@ class EmergentEngine:
         phi = net_magnitude / (self.N * self.v0)
 
         self.phi = float(phi)
+
+    def fast_align_headings(self) -> None:
+        """
+        Calculates heading alignments by evaluating local blocks cell-by-cell.
+        Reduces complexity by breaking down grid building and block processing
+        into distinct, readable sub-functions.
+        """
+        if self.N <= 1:
+            return
+
+        # 1. Build the grid partition structure
+        grid_buckets, _ = self._build_spatial_grid()
+        new_targets = self.target_headings.copy()
+
+        # 2. Iterate through each cell block and compute localized interactions
+        for cell_idx, agents_in_cell in grid_buckets.items():
+            if not agents_in_cell:
+                continue
+
+            self._process_cell_block(cell_idx, agents_in_cell, grid_buckets, new_targets)
+
+        self.target_headings = new_targets
+
+    def _build_spatial_grid(self) -> tuple[dict, np.ndarray]:
+        """
+        Partitions the domain space into discrete coordinate buckets.
+        Returns a dictionary mapping cell indices to agent lists, and the coordinate matrix.
+        """
+        K = self.grid_num_cells_per_axis
+        cell_coords = np.floor(self.positions / self.grid_cell_size).astype(np.int32)
+        cell_coords = np.clip(cell_coords, 0, K - 1)
+
+        grid_buckets = {c: [] for c in range(K * K)}
+        for agent_idx in range(self.N):
+            col, row = cell_coords[agent_idx]
+            cell_1d_idx = col + row * K
+            grid_buckets[cell_1d_idx].append(agent_idx)
+
+        return grid_buckets, cell_coords
+
+    def _get_cell_neighborhood_candidates(self, cell_idx: int, grid_buckets: dict) -> list[int]:
+        """
+        Gathers all agent indices residing within the 3x3 toroidal neighborhood of a cell.
+        """
+        K = self.grid_num_cells_per_axis
+        col = cell_idx % K
+        row = cell_idx // K
+
+        neighborhood_candidates = []
+        for d_col in [-1, 0, 1]:
+            for d_row in [-1, 0, 1]:
+                n_col = (col + d_col) % K
+                n_row = (row + d_row) % K
+                n_cell_1d = n_col + n_row * K
+                neighborhood_candidates.extend(grid_buckets[n_cell_1d])
+
+        return neighborhood_candidates
+
+    def _compute_block_geometry(self, cell_agents: list[int], candidates: list[int]) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Executes broadcasting matrix operations to find relative displacements
+        and squared distances under the Minimum Image Convention.
+        """
+        cell_agents_arr = np.array(cell_agents)
+        candidates_arr = np.array(candidates)
+
+        # Broadcasting shapes: (Num Agents in Cell, Num Candidates in Neighborhood, 2)
+        diff = self.positions[cell_agents_arr, np.newaxis, :] - self.positions[np.newaxis, candidates_arr, :]
+        diff = diff - self.L * np.round(diff / self.L)
+        dist_sq = np.sum(diff ** 2, axis=-1)
+
+        return diff, dist_sq
+
+    def _calculate_agent_forces(self, idx: int, agent_align_mask: np.ndarray, agent_repulse_mask: np.ndarray,
+                                diff_slice: np.ndarray, dist_sq_slice: np.ndarray,
+                                sin_headings: np.ndarray, cos_headings: np.ndarray) -> tuple[
+        np.ndarray, np.ndarray, bool]:
+        """
+        Calculates the distinct local alignment and short-range repulsion unit vectors
+        for a single agent within the block.
+        """
+        # --- PART A: Alignment Vector ---
+        if np.any(agent_align_mask):
+            sin_sum = np.sum(sin_headings * agent_align_mask)
+            cos_sum = np.sum(cos_headings * agent_align_mask)
+            align_mag = np.sqrt(sin_sum ** 2 + cos_sum ** 2)
+            align_vec = np.array([cos_sum, sin_sum]) / (align_mag + 1e-9) if align_mag > 0 else np.zeros(2)
+        else:
+            align_vec = np.zeros(2)
+
+        # --- PART B: Repulsion Vector ---
+        if np.any(agent_repulse_mask):
+            dist = np.sqrt(dist_sq_slice[agent_repulse_mask])
+            dir_vectors = diff_slice[agent_repulse_mask] / (dist[:, np.newaxis] + 1e-9)
+            total_repulsion = np.sum(dir_vectors, axis=0)
+            repulsion_mag = np.linalg.norm(total_repulsion)
+            repulse_vec = total_repulsion / repulsion_mag if repulsion_mag > 0 else np.zeros(2)
+            has_repulsion = True
+        else:
+            repulse_vec = np.zeros(2)
+            has_repulsion = False
+
+        return align_vec, repulse_vec, has_repulsion
+
+    def _blend_and_update_heading(self, agent_idx: int, has_repulsion: bool, any_alignment: bool,
+                                  align_vec: np.ndarray, repulse_vec: np.ndarray, new_targets: np.ndarray) -> None:
+        """
+        Blends the calculated physical forces using weight priorities and commits
+        the final resolved angle to the target array.
+        """
+        if has_repulsion:
+            combined_vec = (1.0 - self.w_repulsion) * align_vec + self.w_repulsion * repulse_vec
+        elif any_alignment:
+            combined_vec = align_vec
+        else:
+            return
+
+        if np.linalg.norm(combined_vec) > 0:
+            new_targets[agent_idx] = np.arctan2(combined_vec[1], combined_vec[0])
+
+    def _process_cell_block(self, cell_idx: int, agents_in_cell: list[int],
+                            grid_buckets: dict, new_targets: np.ndarray) -> None:
+        """
+        Orchestrates localized matrix math for a single cell by coordinating
+        geometry computation, force calculation, and heading updates.
+        """
+        candidates = self._get_cell_neighborhood_candidates(cell_idx, grid_buckets)
+        if not candidates:
+            return
+
+        # 1. Compute vectorized block geometry
+        diff, dist_sq = self._compute_block_geometry(agents_in_cell, candidates)
+
+        # 2. Extract logical interaction masks (excluding self-interaction)
+        align_mask = (dist_sq < (self.R ** 2)) & (dist_sq > 0.0)
+        repulsion_mask = (dist_sq < (self.r_repulsion ** 2)) & (dist_sq > 0.0)
+
+        candidates_arr = np.array(candidates)
+        sin_headings = np.sin(self.headings[candidates_arr])
+        cos_headings = np.cos(self.headings[candidates_arr])
+
+        # 3. Process each individual agent within this spatial block
+        for idx, agent_i in enumerate(agents_in_cell):
+            align_vec, repulse_vec, has_repulsion = self._calculate_agent_forces(
+                idx, align_mask[idx], repulsion_mask[idx], diff[idx], dist_sq[idx], sin_headings, cos_headings
+            )
+
+            self._blend_and_update_heading(
+                agent_i, has_repulsion, np.any(align_mask[idx]), align_vec, repulse_vec, new_targets
+            )
