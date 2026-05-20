@@ -7,9 +7,9 @@ __pycache__/
 .venv/
 venv/
 ENV/
+data/
 
 # IDE files
 .idea/
 .vscode/
-/src/data/phase_transition_metrics.csv
-/src/data/phase_transition_plot.png
+

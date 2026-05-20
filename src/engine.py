@@ -13,7 +13,8 @@ class EmergentEngine:
                  alignment_radius: float = 5.0,
                  noise_amplitude: float = 1.5,
                  max_turn_rate: float = 4.0,
-                 update_stride: int = 3):
+                 update_stride: int = 3,
+                 fast_on: bool = False):
         self.N: int = num_agents
         self.L: float = domain_size
         self.v0: float = speed
@@ -44,7 +45,7 @@ class EmergentEngine:
         self.grid_num_cells_per_axis: int = int(np.floor(self.L / self.grid_cell_size))
 
         # Algorithmic Mode Flag (True = O(N) Spatial Hashing, False = O(N^2) Bruteforce)
-        self.use_fast_compute: bool = False
+        self.use_fast_compute: bool = fast_on
 
 
     def initialize_random_state(self):
