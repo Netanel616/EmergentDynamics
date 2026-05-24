@@ -35,7 +35,8 @@ def run_phase_transition_analysis():
             domain_size=domain_size,
             speed=speed,
             alignment_radius=alignment_radius,
-            noise_amplitude=eta
+            noise_amplitude=eta,
+
         )
 
         steady_state_orders = []
@@ -91,7 +92,7 @@ def run_hysteresis_analysis():
 
     # Core configuration
     num_agents = 500
-    domain_size = 200.0
+    domain_size = 150.0
     speed = 1.2
     alignment_radius = 5.0
 
@@ -109,8 +110,14 @@ def run_hysteresis_analysis():
         speed=speed,
         alignment_radius=alignment_radius,
         noise_amplitude=0.0,
-        fast_on = True
+
     )
+
+    # --- PRE-WARMUP: Let the agents align perfectly at zero noise before scanning ---
+    engine.eta = 0.0
+    print(" --> Warming up system at zero noise for perfect initial alignment...")
+    for _ in range(400):  # Give them 400 frames to form a perfect flock initially
+        engine.step_with_alignment(dt=0.15)
 
     forward_results = []
 
